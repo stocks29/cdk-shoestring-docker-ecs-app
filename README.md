@@ -1,12 +1,37 @@
-# Welcome to your CDK TypeScript Construct Library project!
+# cdk-shoestring-docker-ecs-app
 
-You should explore the contents of this project. It demonstrates a CDK Construct Library that includes a construct (`CdkShoestringDockerEcsApp`)
-which contains an Amazon SQS queue that is subscribed to an Amazon SNS topic.
+A very opinionated cdk construct which creates a cheap stack for shoestringing apps early on. 
 
-The construct defines an interface (`CdkShoestringDockerEcsAppProps`) to configure the visibility timeout of the queue.
+This library is in the very early stages and subject to breaking changes. Use at your own risk.
 
-## Useful commands
+```typescript
 
- * `npm run build`   compile typescript to js
- * `npm run watch`   watch for changes and compile
- * `npm run test`    perform the jest unit tests
+  const dataBucket = new s3.Bucket(this, `DataBucket`);
+
+  new shoestring.CdkShoestringDockerEcsApp(stack, 'MyShoestringStartupApp', {
+    codeRepositoryName: 'MyAppCodeCommitRepo',
+    ecrRepositoryName: 'MyAppEcrRepo',
+    pipelineName: 'MyAppPipeline',
+    clusterInstanceType: new ec2.InstanceType("t3a.nano"),
+    region: 'us-east-1',
+    buildCommand: 'npm run build',
+    synthSubdirectory: 'infrastructure',
+    healthCheck: {
+      path: "/health",
+      healthyThresholdCount: 2,
+    },
+    environments: [
+      {
+        name: 'Prod',
+        appPort: 4000,
+        lbPort: 80,
+        envVariables: {
+          PORT: '4000',
+        },
+        withTaskRole: role => {
+          dataBucket.grantReadWrite(role);
+        }
+      }
+    ]
+  });
+```
