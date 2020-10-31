@@ -1,8 +1,16 @@
 {
   "name": "cdk-shoestring-docker-ecs-app",
+  "author": {
+    "name": "Bob Stockdale",
+    "url": "https://github.com/stocks29"
+  },
   "version": "0.1.0",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+  "repository": {
+    "type": "github",
+    "url": "https://github.com/stocks29/cdk-shoestring-docker-ecs-app/"
+  },
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
