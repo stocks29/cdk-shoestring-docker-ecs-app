@@ -4,6 +4,10 @@ A very opinionated cdk construct which creates a cheap stack for shoestringing a
 
 This library is in the very early stages and subject to breaking changes. Use at your own risk.
 
+Creates a single ECS cluster and runs services/containers for multiple environments on the cluster. It uses EC2 clusters since they're cheaper than Fargate. It also uses a single load balancer for all environments since that is typically the most expensive piece of hardware. All environments must be in the same account/region. 
+
+If you're looking to deploy a scrappy startup app and save $ this library might be for you. If you're looking to deploy an enterprise application to multiple accounts/regions and cost is no object, this is not for you.
+
 ```typescript
 
   const dataBucket = new s3.Bucket(this, `DataBucket`);
@@ -44,3 +48,14 @@ This library is in the very early stages and subject to breaking changes. Use at
     setupServices: true,
   });
 ```
+
+## Resources
+
+This creates:
+
+* CodeCommit repo which you can push to in order to trigger automated builds
+* ECR Repo to house your docker image builds. By default it only keeps 100 images
+* CodePipeline which automatically build your docker image and deploy it to an ECR repo
+* A single ECS cluster regardless of how many environments you have. You can set instance size
+* A single ALB reglardless of how many environments you have.
+* An ECS service per environment
