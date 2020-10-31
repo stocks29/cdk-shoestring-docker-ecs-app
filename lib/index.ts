@@ -9,6 +9,7 @@ import * as ec2 from '@aws-cdk/aws-ec2';
 import * as iam from '@aws-cdk/aws-iam';
 import * as loadbalancing from '@aws-cdk/aws-elasticloadbalancingv2';
 import * as pipelines from '@aws-cdk/pipelines';
+import { env } from 'process';
 
 export type EnvVars = Record<string, string>;
 
@@ -167,12 +168,14 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
       // the repo, then do another deploy after with setupServices:true
       // to create the services and containers so the deploy is successful.
       props.environments.forEach(environment => {
+        const { withTaskRole, lbPort, envVariables, appPort, name } = environment;
         this.createAppEnvAndDeployStage({
           ...baseEnvAndDeployProps,
-          envName: environment.name,
-          port: environment.appPort,
-          environment: environment.envVariables,
-          lbPort: environment.lbPort,
+          envName: name,
+          port: appPort,
+          environment: envVariables,
+          lbPort,
+          withTaskRole,
         });
       });
     }
