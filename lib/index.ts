@@ -202,7 +202,8 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
     }
 
     const container = taskDefinition.addContainer(imageName, {
-      image: ecs.EcrImage.fromEcrRepository(ecrRepo, LATEST_IMAGE_NAME),
+      // serve the docker getting started image. later builds will overwrite this.
+      image: ecs.EcrImage.fromRegistry('docker/getting-started'),
       memoryReservationMiB: 100,
       logging: new ecs.AwsLogDriver({
         streamPrefix: `${imageName}-${envName}`,
