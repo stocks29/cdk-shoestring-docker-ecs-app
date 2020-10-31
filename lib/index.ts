@@ -201,6 +201,10 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
       withTaskRole(taskDefinition.taskRole);
     }
 
+    if (taskDefinition.executionRole) {
+      ecrRepo.grantPull(taskDefinition.executionRole); 
+    }
+
     const container = taskDefinition.addContainer(imageName, {
       // serve the docker getting started image. later builds will overwrite this.
       image: ecs.EcrImage.fromRegistry('docker/getting-started'),
