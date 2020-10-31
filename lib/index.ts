@@ -10,11 +10,14 @@ import * as iam from '@aws-cdk/aws-iam';
 import * as loadbalancing from '@aws-cdk/aws-elasticloadbalancingv2';
 import * as pipelines from '@aws-cdk/pipelines';
 
-type ShoeStringEnvironment = {
+export type EnvVars = Record<string, string>;
+
+export type ShoeStringEnvironment = {
   name: string;
   appPort: number;
-  envVariables: Record<string, string>;
+  envVariables?: EnvVars,
   withTaskRole?: (role: iam.IRole) => void;
+  lbPort?: number;
 }
 
 export interface CdkShoestringDockerEcsAppProps {
@@ -164,6 +167,7 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
         envName: environment.name,
         port: environment.appPort,
         environment: environment.envVariables,
+        lbPort: environment.lbPort,
       });
 
     });

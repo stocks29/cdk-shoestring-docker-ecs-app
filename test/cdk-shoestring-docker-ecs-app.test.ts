@@ -1,15 +1,28 @@
 import { expect as expectCDK, countResources } from '@aws-cdk/assert';
 import * as cdk from '@aws-cdk/core';
-import * as CdkShoestringDockerEcsApp from '../lib/index';
+import * as shoestring from '../lib/index';
 
 /*
  * Example test 
  */
-test('SNS Topic Created', () => {
+test('ECS Service Created', () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
   // WHEN
-  new CdkShoestringDockerEcsApp.CdkShoestringDockerEcsApp(stack, 'MyTestConstruct');
+  new shoestring.CdkShoestringDockerEcsApp(stack, 'MyShoestringStartupApp', {
+    codeRepositoryName: 'commitRepo',
+    ecrRepositoryName: 'ecrRepo',
+    region: 'us-east-1',
+    environments: [
+      {
+        appPort: 4000,
+        envVariables: {
+          PORT: '4000',
+        },
+        name: 'Prod',
+      }
+    ]
+  });
   // THEN
-  expectCDK(stack).to(countResources("AWS::SNS::Topic",0));
+  expectCDK(stack).to(countResources("AWS::ECS::Service",1));
 });
