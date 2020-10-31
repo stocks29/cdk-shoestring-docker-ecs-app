@@ -32,6 +32,15 @@ This library is in the very early stages and subject to breaking changes. Use at
           dataBucket.grantReadWrite(role);
         }
       }
-    ]
+    ],
+
+    /**
+     * The flag controls if the ECS Services and Tasks get created.
+     * 
+     * On the initial deploy, leave this off or set to false. After the
+     * initial deploy, once you have at least one image deployed to your
+     * ECR repo, set this to true to deploy the services/tasks.
+     */
+    setupServices: true,
   });
 ```

@@ -31,6 +31,7 @@ export interface CdkShoestringDockerEcsAppProps {
   environments: ShoeStringEnvironment[];
   healthCheck?: loadbalancing.HealthCheck;
   region: string;
+  setupServices?: boolean;
 }
 
 interface AppEnvAndDeployStageProps {
@@ -161,24 +162,28 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
       region: props.region,
     };
 
-    props.environments.forEach(environment => {
-      this.createAppEnvAndDeployStage({
-        ...baseEnvAndDeployProps,
-        envName: environment.name,
-        port: environment.appPort,
-        environment: environment.envVariables,
-        lbPort: environment.lbPort,
+    if (props.setupServices) {
+      // this purpose here is so we can get a single app build in to populate
+      // the repo, then do another deploy after with setupServices:true
+      // to create the services and containers so the deploy is successful.
+      props.environments.forEach(environment => {
+        this.createAppEnvAndDeployStage({
+          ...baseEnvAndDeployProps,
+          envName: environment.name,
+          port: environment.appPort,
+          environment: environment.envVariables,
+          lbPort: environment.lbPort,
+        });
       });
-
-    });
+    }
   }
 
   createAppEnvAndDeployStage(props: AppEnvAndDeployStageProps) {
-    const betaAppEnv = this.createAppEnvironment(props);
+    const appEnv = this.createAppEnvironment(props);
 
     this.createDeployStage({
       ...props,
-      appEnv: betaAppEnv,
+      appEnv: appEnv,
       stageName: props.envName,
     });
   }
@@ -201,13 +206,9 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
       withTaskRole(taskDefinition.taskRole);
     }
 
-    if (taskDefinition.executionRole) {
-      ecrRepo.grantPull(taskDefinition.executionRole); 
-    }
-
     const container = taskDefinition.addContainer(imageName, {
       // serve the docker getting started image. later builds will overwrite this.
-      image: ecs.EcrImage.fromRegistry('docker/getting-started'),
+      image: ecs.EcrImage.fromEcrRepository(ecrRepo, 'latest'),
       memoryReservationMiB: 100,
       logging: new ecs.AwsLogDriver({
         streamPrefix: `${imageName}-${envName}`,
