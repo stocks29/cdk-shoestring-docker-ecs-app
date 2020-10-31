@@ -2,11 +2,15 @@ import { expect as expectCDK, countResources } from '@aws-cdk/assert';
 import * as cdk from '@aws-cdk/core';
 import * as shoestring from '../lib/index';
 
+const context = {
+  '@aws-cdk/core:newStyleStackSynthesis': true
+};
+
 /*
  * Example test 
  */
 test('ECS Service not created', () => {
-  const app = new cdk.App();
+  const app = new cdk.App({ context });
   const stack = new cdk.Stack(app, "TestStack");
   // WHEN
   new shoestring.CdkShoestringDockerEcsApp(stack, 'MyShoestringStartupApp', {
@@ -29,7 +33,7 @@ test('ECS Service not created', () => {
 
 
 test('ECS Service created', () => {
-  const app = new cdk.App();
+  const app = new cdk.App({ context });
   const stack = new cdk.Stack(app, "TestStack");
   // WHEN
   new shoestring.CdkShoestringDockerEcsApp(stack, 'MyShoestringStartupApp', {
