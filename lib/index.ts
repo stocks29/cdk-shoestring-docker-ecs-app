@@ -9,7 +9,11 @@ import * as ec2 from '@aws-cdk/aws-ec2';
 import * as iam from '@aws-cdk/aws-iam';
 import * as loadbalancing from '@aws-cdk/aws-elasticloadbalancingv2';
 import * as pipelines from '@aws-cdk/pipelines';
-import { env } from 'process';
+import { Certificate, CertificateValidation, ICertificate } from '@aws-cdk/aws-certificatemanager';
+import { ARecord, HostedZone, IHostedZone, PublicHostedZone, RecordTarget } from '@aws-cdk/aws-route53';
+import { LoadBalancerTarget } from '@aws-cdk/aws-route53-targets';
+import { ApplicationLoadBalancer, ApplicationProtocol, ListenerCondition } from '@aws-cdk/aws-elasticloadbalancingv2';
+import { IEcsLoadBalancerTarget } from '@aws-cdk/aws-ecs';
 
 export type EnvVars = Record<string, string>;
 
@@ -19,6 +23,9 @@ export type ShoeStringEnvironment = {
   envVariables?: EnvVars,
   withTaskRole?: (role: iam.IRole) => void;
   lbPort?: number;
+  dnsRecordName?: string; // only the www part of www.example.com
+  containerDefnProps?: ecs.ContainerDefinitionProps;
+  postDeployManualApproval?: boolean;
 }
 
 export interface CdkShoestringDockerEcsAppProps {
@@ -33,10 +40,14 @@ export interface CdkShoestringDockerEcsAppProps {
   healthCheck?: loadbalancing.HealthCheck;
   region: string;
   setupServices?: boolean;
+  setupListeners?: boolean;
+  hostedZoneId?: string;
+  domainName?: string;
 }
 
 interface AppEnvAndDeployStageProps {
   envName: string;
+  certificate?: Certificate;
   cluster: ecs.ICluster;
   ecrRepo: ecr.Repository;
   imageName: string;
@@ -49,14 +60,21 @@ interface AppEnvAndDeployStageProps {
   withTaskRole?: (role: iam.IRole) => void;
   healthCheck?: loadbalancing.HealthCheck;
   region: string;
+  dnsRecordName?: string; // only the www part of www.example.com
+  domainName?: string;
+  setupListeners?: boolean;
+  containerDefnProps?: ecs.ContainerDefinitionProps;
+  postDeployManualApproval?: boolean;
 }
 
 interface AppEnv {
   service: ecs.IBaseService;
+  targetConfig?: TargetConfig;
 }
 
 interface AppEnvProps {
   envName: string;
+  certificate?: Certificate;
   cluster: ecs.ICluster;
   ecrRepo: ecr.Repository;
   imageName: string;
@@ -67,6 +85,10 @@ interface AppEnvProps {
   withTaskRole?: (role: iam.IRole) => void;
   healthCheck?: loadbalancing.HealthCheck;
   region: string;
+  dnsRecordName?: string; // only the www part of www.example.com
+  domainName?: string;
+  setupListeners?: boolean;
+  containerDefnProps?: ecs.ContainerDefinitionProps;
 }
 
 interface AppStageProps {
@@ -74,6 +96,7 @@ interface AppStageProps {
   input: codepipeline.Artifact;
   pipeline: pipelines.CdkPipeline;
   stageName: string;
+  postDeployManualApproval?: boolean;
 }
 
 interface AppBuildProps {
@@ -83,6 +106,12 @@ interface AppBuildProps {
   appBuildArtifact: codepipeline.Artifact;
   imageName: string;
   region: string;
+}
+
+interface TargetConfig {
+  target: IEcsLoadBalancerTarget,
+  hostnames: string[]
+  port: number;
 }
 
 const LATEST_IMAGE_NAME = "latest";
@@ -107,14 +136,12 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
       },
     });
 
-    const loadBalancer = new loadbalancing.ApplicationLoadBalancer(
-      this,
-      "LoadBalancer",
-      {
-        vpc: cluster.vpc,
-        internetFacing: true,
-      }
-    );
+    const loadBalancer = new loadbalancing.ApplicationLoadBalancer(this, "LoadBalancer", {
+      vpc: cluster.vpc,
+      internetFacing: true,
+    });
+
+    const { certificate, zone } = this.setupDomain(loadBalancer, props);
 
     // The code that defines your stack goes here
     const sourceArtifact = new codepipeline.Artifact();
@@ -154,34 +181,111 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
     });
 
     const baseEnvAndDeployProps = {
+      ...props,
+      certificate,
+      zone,
       cluster,
       ecrRepo,
       imageName,
       loadBalancer,
       input: appBuildArtifact,
       pipeline,
-      region: props.region,
     };
 
     if (props.setupServices) {
       // this purpose here is so we can get a single app build in to populate
       // the repo, then do another deploy after with setupServices:true
       // to create the services and containers so the deploy is successful.
-      props.environments.forEach(environment => {
-        const { withTaskRole, lbPort, envVariables, appPort, name } = environment;
-        this.createAppEnvAndDeployStage({
+      const appEnvs = props.environments.map(environment => {
+        const { envVariables, appPort, name, ...restEnv } = environment;
+        return this.createAppEnvAndDeployStage({
           ...baseEnvAndDeployProps,
+          ...restEnv,
           envName: name,
           port: appPort,
           environment: envVariables,
-          lbPort,
-          withTaskRole,
         });
       });
+
+      const targetConfigs: TargetConfig[] = (appEnvs.filter(env => env.targetConfig).map(env => env.targetConfig) as TargetConfig[]);
+
+      if (props.setupListeners && targetConfigs && targetConfigs.length > 0) {
+
+        if (certificate) {
+          this.setupProtocolListener(loadBalancer, ApplicationProtocol.HTTPS, targetConfigs, props, certificate);
+
+          loadBalancer.addRedirect({
+            sourcePort: 80,
+            sourceProtocol: ApplicationProtocol.HTTP,
+            targetPort: 443,
+            targetProtocol: ApplicationProtocol.HTTPS
+          });
+        } else {
+          // setup port 80 listener
+          this.setupProtocolListener(loadBalancer, ApplicationProtocol.HTTP, targetConfigs, props);
+        }
+      }
     }
   }
 
-  createAppEnvAndDeployStage(props: AppEnvAndDeployStageProps) {
+  setupProtocolListener(loadBalancer: ApplicationLoadBalancer, protocol: ApplicationProtocol, targetConfigs: TargetConfig[], props: CdkShoestringDockerEcsAppProps, certificate?: Certificate) {
+    const listener = loadBalancer.addListener(`${protocol}-Listener`, { protocol, certificates: certificate ? [certificate] : undefined });
+
+    targetConfigs.forEach((config, i) => {
+      const hostnames = config?.hostnames;
+      const conditions = i < targetConfigs.length - 1
+        ? [ListenerCondition.hostHeaders(hostnames)]
+        : undefined;
+      if (hostnames && config) {
+        listener.addTargets(`Target-${i}`, {
+          priority: conditions ? i + 1 : undefined,
+          conditions,
+          targets: [config.target],
+          protocol: loadbalancing.ApplicationProtocol.HTTP,
+          healthCheck: props.healthCheck,
+        });
+      } else {
+        throw new Error('missing hostnames or target config undefined');
+      }
+    });
+  }
+
+  setupDomain(loadBalancer: ApplicationLoadBalancer, props: CdkShoestringDockerEcsAppProps) {
+    if (props.domainName && props.hostedZoneId) {
+      const zone = HostedZone.fromHostedZoneAttributes(this, 'HostedZone', {
+        hostedZoneId: props.hostedZoneId,
+        zoneName: props.domainName,
+      });
+
+      const recordNames = props.environments.map(env => env.dnsRecordName);
+      const subjectAlternativeNames = props.environments.map(env => `${env.dnsRecordName}.${props.domainName}`);
+
+      const certificate = new Certificate(this, 'Certificate', {
+        domainName: props.domainName,
+        validation: CertificateValidation.fromDns(zone),
+        subjectAlternativeNames,
+      });
+
+      // we have dns, so setup an A Record
+      const lbTarget = RecordTarget.fromAlias(new LoadBalancerTarget(loadBalancer));
+
+      // undefined handles the root dns
+      recordNames.concat([undefined]).forEach(recordName => {
+        new ARecord(this, `ARecord-${recordName || 'Root'}`, {
+          zone,
+          recordName,
+          target: lbTarget,
+        });
+      })
+
+
+      return { zone, certificate };
+    }
+
+    return {};
+  }
+
+  createAppEnvAndDeployStage(props: AppEnvAndDeployStageProps): AppEnv {
     const appEnv = this.createAppEnvironment(props);
 
     this.createDeployStage({
@@ -189,20 +293,28 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
       appEnv: appEnv,
       stageName: props.envName,
     });
+
+    return appEnv;
   }
 
-  createAppEnvironment({
-    cluster,
-    ecrRepo,
-    envName,
-    imageName,
-    loadBalancer,
-    port,
-    lbPort,
-    environment,
-    withTaskRole,
-    healthCheck,
-  }: AppEnvProps): AppEnv {
+  createAppEnvironment(props: AppEnvProps): AppEnv {
+    const {
+      cluster,
+      ecrRepo,
+      envName,
+      imageName,
+      loadBalancer,
+      port,
+      lbPort,
+      environment,
+      withTaskRole,
+      healthCheck,
+      dnsRecordName,
+      domainName,
+      setupListeners,
+      containerDefnProps,
+    } = props;
+
     const taskDefinition = new ecs.Ec2TaskDefinition(this, `AppTask${envName}`);
 
     if (withTaskRole) {
@@ -211,6 +323,7 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
 
     const container = taskDefinition.addContainer(imageName, {
       // serve the docker getting started image. later builds will overwrite this.
+      ...containerDefnProps,
       image: ecs.EcrImage.fromEcrRepository(ecrRepo, 'latest'),
       memoryReservationMiB: 100,
       logging: new ecs.AwsLogDriver({
@@ -229,36 +342,62 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
       taskDefinition,
     });
 
-    const listener = loadBalancer.addListener("Listener" + envName, {
-      port: lbPort ? lbPort : port,
-      protocol: loadbalancing.ApplicationProtocol.HTTP,
+
+    const target: IEcsLoadBalancerTarget = service.loadBalancerTarget({
+      containerName: imageName,
+      containerPort: port,
+      protocol: ecs.Protocol.TCP,
     });
 
-    listener.addTargets("Target" + envName, {
-      port,
-      targets: [
-        service.loadBalancerTarget({
-          containerName: imageName,
-          containerPort: port,
-          protocol: ecs.Protocol.TCP,
-        }),
-      ],
-      protocol: loadbalancing.ApplicationProtocol.HTTP,
-      healthCheck,
-    });
+    let targetConfig: TargetConfig | undefined = undefined;
 
-    return { service };
+    if (setupListeners) {
+      if (domainName) {
+        if (!dnsRecordName) {
+          throw new Error('dnsRecordName missing for ' + envName);
+        } 
+
+        targetConfig = {
+          target: target,
+          hostnames: [`${dnsRecordName}.${domainName}`],
+          port,
+        };
+      } else {
+        // no domain name, so setup port listeners
+        const listener = loadBalancer.addListener("Listener" + envName, {
+          port: lbPort || port,
+          protocol: ApplicationProtocol.HTTP,
+        });
+
+        listener.addTargets("Target" + envName, {
+          port,
+          targets: [target],
+          protocol: loadbalancing.ApplicationProtocol.HTTP,
+          healthCheck,
+        });
+      }
+    }
+
+    return { service, targetConfig };
   }
 
-  createDeployStage({ appEnv, input, pipeline, stageName }: AppStageProps) {
+  createDeployStage({ appEnv, input, pipeline, stageName, postDeployManualApproval }: AppStageProps) {
     const betaStage = pipeline.addStage(stageName);
+
     betaStage.addActions(
       new codepipeline_actions.EcsDeployAction({
         actionName: `${stageName}EcsDeploy`,
         service: appEnv.service,
+        runOrder: betaStage.nextSequentialRunOrder(),
         input,
       })
     );
+
+    if (postDeployManualApproval) {
+      betaStage.addManualApprovalAction({
+        runOrder: betaStage.nextSequentialRunOrder(),
+      });
+    }
   }
 
   createAppBuild({
