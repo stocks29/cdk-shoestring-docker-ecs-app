@@ -133,15 +133,21 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
       lifecycleRules: props.ecrLifecycleRules || [{ maxImageCount: 100 }],
     });
 
+    const vpc = new ec2.Vpc(this, 'Vpc', {
+      maxAzs: 2,
+      natGateways: 0, // these are expensive. ditch them.
+    })
+
     // share a cluster and load balancer between envs to save $
     const cluster = new ecs.Cluster(this, "Cluster", {
+      vpc,
       capacity: {
         instanceType: props.clusterInstanceType || new ec2.InstanceType("t3a.nano"),
       },
     });
 
     const loadBalancer = new loadbalancing.ApplicationLoadBalancer(this, "LoadBalancer", {
-      vpc: cluster.vpc,
+      vpc,
       internetFacing: true,
     });
 
