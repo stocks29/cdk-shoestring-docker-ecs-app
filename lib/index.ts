@@ -8,9 +8,10 @@ import * as ecs from '@aws-cdk/aws-ecs';
 import * as ec2 from '@aws-cdk/aws-ec2';
 import * as iam from '@aws-cdk/aws-iam';
 import * as loadbalancing from '@aws-cdk/aws-elasticloadbalancingv2';
+import * as logs from "@aws-cdk/aws-logs";
 import * as pipelines from '@aws-cdk/pipelines';
-import { Certificate, CertificateValidation, ICertificate } from '@aws-cdk/aws-certificatemanager';
-import { ARecord, HostedZone, IHostedZone, PublicHostedZone, RecordTarget } from '@aws-cdk/aws-route53';
+import { Certificate, CertificateValidation } from '@aws-cdk/aws-certificatemanager';
+import { ARecord, HostedZone, RecordTarget } from '@aws-cdk/aws-route53';
 import { LoadBalancerTarget } from '@aws-cdk/aws-route53-targets';
 import { ApplicationLoadBalancer, ApplicationProtocol, ListenerCondition } from '@aws-cdk/aws-elasticloadbalancingv2';
 import { IEcsLoadBalancerTarget } from '@aws-cdk/aws-ecs';
@@ -22,6 +23,7 @@ export type ShoeStringEnvironment = {
   appPort: number;
   envVariables?: EnvVars,
   withTaskRole?: (role: iam.IRole) => void;
+  withLogGroup?: (logGroup: logs.ILogGroup) => void;
   lbPort?: number;
   dnsRecordName?: string; // only the www part of www.example.com
   containerDefnProps?: ecs.ContainerDefinitionProps;
@@ -58,6 +60,7 @@ interface AppEnvAndDeployStageProps {
   lbPort?: number;
   environment?: Record<string, string>;
   withTaskRole?: (role: iam.IRole) => void;
+  withLogGroup?: (logGroup: logs.ILogGroup) => void;
   healthCheck?: loadbalancing.HealthCheck;
   region: string;
   dnsRecordName?: string; // only the www part of www.example.com
@@ -83,6 +86,7 @@ interface AppEnvProps {
   lbPort?: number;
   environment?: Record<string, string>;
   withTaskRole?: (role: iam.IRole) => void;
+  withLogGroup?: (logGroup: logs.ILogGroup) => void;
   healthCheck?: loadbalancing.HealthCheck;
   region: string;
   dnsRecordName?: string; // only the www part of www.example.com
@@ -308,6 +312,7 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
       lbPort,
       environment,
       withTaskRole,
+      withLogGroup,
       healthCheck,
       dnsRecordName,
       domainName,
@@ -321,14 +326,16 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
       withTaskRole(taskDefinition.taskRole);
     }
 
+    const logging = new ecs.AwsLogDriver({
+      streamPrefix: `${imageName}-${envName}`,
+    });
+
     const container = taskDefinition.addContainer(imageName, {
       // serve the docker getting started image. later builds will overwrite this.
       ...containerDefnProps,
       image: ecs.EcrImage.fromEcrRepository(ecrRepo, 'latest'),
       memoryReservationMiB: 100,
-      logging: new ecs.AwsLogDriver({
-        streamPrefix: `${imageName}-${envName}`,
-      }),
+      logging,
       environment,
     });
 
@@ -342,12 +349,18 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
       taskDefinition,
     });
 
-
     const target: IEcsLoadBalancerTarget = service.loadBalancerTarget({
       containerName: imageName,
       containerPort: port,
       protocol: ecs.Protocol.TCP,
     });
+
+    // calling this late to ensure that the log group has been setup
+    // since the log group only gets created when bind is called
+    // which happens after the log driver is added to a container
+    if (withLogGroup && logging.logGroup) {
+      withLogGroup(logging.logGroup);
+    }
 
     let targetConfig: TargetConfig | undefined = undefined;
 

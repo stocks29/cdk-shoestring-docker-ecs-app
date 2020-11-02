@@ -101,6 +101,28 @@ If you're looking to deploy a scrappy startup app and save $ this library might 
         },
 
         /**
+         * Callback which receives the logGroup for creating metric
+         * filters and alarms
+         */
+        withLogGroup: logGroup => {
+          const mf = new logs.MetricFilter(this, `ErrorMf${envName}`, {
+            logGroup,
+            metricNamespace: `App.${envName}`,
+            metricName: 'Errors',
+            filterPattern: logs.FilterPattern.allTerms('ERROR'),
+            defaultValue: 0,
+          });
+
+          const metric = mf.metric();
+
+          new cloudwatch.Alarm(this, `ErrorAlarm${name}`, {
+            metric,
+            threshold: 1,
+            evaluationPeriods: 1,
+          });
+        },
+
+        /**
          * If you pass domainName on the parent and specify a dnsRecordName,
          * an dns record will be added for this environment and a certificate
          * will be setup
