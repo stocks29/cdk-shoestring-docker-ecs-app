@@ -143,10 +143,18 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
       vpc,
       capacity: {
         instanceType: props.clusterInstanceType || new ec2.InstanceType("t3a.nano"),
+        /** 
+         * needed to avoid nats
+         * https://docs.aws.amazon.com/vpc/latest/userguide/vpce-interface.html
+         * */
+        associatePublicIpAddress: true,
+        vpcSubnets: {
+          subnetType: ec2.SubnetType.PUBLIC,
+        }
       },
     });
 
-    const loadBalancer = new loadbalancing.ApplicationLoadBalancer(this, "LoadBalancer", {
+    const loadBalancer = new loadbalancing.ApplicationLoadBalancer(this, "LB", {
       vpc,
       internetFacing: true,
     });
