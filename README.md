@@ -59,6 +59,15 @@ If you're looking to deploy a scrappy startup app and save $ this library might 
     },
 
     /**
+     * Callback which receives the build role. Granting access to this role
+     * will allow your AppBuild to access these resources. This is useful
+     * for allowing your docker build to pull from private ECR repos.
+     */
+    withBuildRole: role => {
+      elixirEcr.grantWrite(role);
+    },
+
+    /**
      * Each element in this array represents an environment to create.
      * Note that because we're on a shoestring budget, all environments
      * must live in the same account/region.

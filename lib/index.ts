@@ -45,6 +45,7 @@ export interface CdkShoestringDockerEcsAppProps {
   setupListeners?: boolean;
   hostedZoneId?: string;
   domainName?: string;
+  withBuildRole?: (role: iam.IRole) => void;
 }
 
 interface AppEnvAndDeployStageProps {
@@ -110,6 +111,7 @@ interface AppBuildProps {
   appBuildArtifact: codepipeline.Artifact;
   imageName: string;
   region: string;
+  withBuildRole?: (role: iam.IRole) => void;
 }
 
 interface TargetConfig {
@@ -196,6 +198,7 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
       ecrRepo,
       imageName,
       region: props.region,
+      withBuildRole: props.withBuildRole,
     });
 
     const baseEnvAndDeployProps = {
@@ -434,6 +437,7 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
     ecrRepo,
     imageName,
     region,
+    withBuildRole,
   }: AppBuildProps) {
     const project = new codebuild.PipelineProject(this, "AppBuildProject", {
       environment: {
@@ -490,6 +494,10 @@ export class CdkShoestringDockerEcsApp extends cdk.Construct {
     );
     if (project.role) {
       ecrRepo.grantPullPush(project.role);
+
+      if (withBuildRole) {
+        withBuildRole(project.role);
+      }
     }
 
     const appBuildStage = pipeline.addStage("AppBuild");
